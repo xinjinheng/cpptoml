@@ -2310,8 +2310,7 @@ class parser
         }
     }
 
-    parse_type determine_value_type(const std::string::iterator& it,
-                                    const std::string::iterator& end)
+    parse_type determine_value_type(const std::string::iterator& it, const std::string::iterator& end)
     {
         if (it == end)
         {
@@ -2352,8 +2351,7 @@ class parser
         throw_parse_exception("Failed to parse value type");
     }
 
-    parse_type determine_number_type(const std::string::iterator& it,
-                                     const std::string::iterator& end)
+    parse_type determine_number_type(const std::string::iterator& it, const std::string::iterator& end)
     {
         // determine if we are an integer or a float
         auto check_it = it;
@@ -2368,7 +2366,7 @@ class parser
 
         while (check_it != end && is_number(*check_it))
             ++check_it;
-        if (check_it != end && *check_it == '.')
+        if (check_it != end && (*check_it == '.' || *check_it == 'e' || *check_it == 'E'))
         {
             ++check_it;
             while (check_it != end && is_number(*check_it))
@@ -2381,8 +2379,7 @@ class parser
         }
     }
 
-    std::shared_ptr<value<std::string>> parse_string(std::string::iterator& it,
-                                                     std::string::iterator& end)
+    std::shared_ptr<value<std::string>> parse_string(std::string::iterator& it, std::string::iterator& end)
     {
         auto delim = *it;
         assert(delim == '"' || delim == '\'');
@@ -2400,7 +2397,85 @@ class parser
                 return parse_multiline_string(it, end, delim);
             }
         }
+        // Check for raw string
+        else if (delim == '"' && check_it != end && *check_it == '#')
+        {
+            return parse_raw_string(it, end);
+        }
         return make_value<std::string>(string_literal(it, end, delim));
+    }
+
+    std::shared_ptr<value<std::string>>
+    parse_raw_string(std::string::iterator& it, std::string::iterator& end)
+    {
+        // Skip the opening "
+        ++it;
+
+        // Count the number of # characters
+        size_t hash_count = 0;
+        while (it != end && *it == '#')
+        {
+            ++hash_count;
+            ++it;
+        }
+
+        if (it == end)
+            throw_parse_exception("Unterminated raw string");
+
+        std::stringstream ss;
+
+        // Handle the remainder of the current line
+        auto handle_line = [&](std::string::iterator& local_it, std::string::iterator& local_end)
+        {
+            while (local_it != local_end)
+            {
+                // Check if we've reached the end of the raw string
+                if (std::distance(local_it, local_end) >= hash_count + 1)
+                {
+                    bool found = true;
+                    auto check = local_it;
+                    for (size_t i = 0; i < hash_count; ++i)
+                    {
+                        if (*check++ != '#')
+                        {
+                            found = false;
+                            break;
+                        }
+                    }
+                    if (found && *check == '"')
+                    {
+                        local_it = check + 1;
+                        return true; // End of raw string
+                    }
+                }
+
+                ss << *local_it++;
+            }
+            return false; // Not end of raw string
+        };
+
+        // Handle the current line
+        bool done = handle_line(it, end);
+        if (done)
+            return make_value<std::string>(ss.str());
+
+        // Start eating lines
+        while (detail::getline(input_, line_))
+        {
+            ++line_number_;
+
+            it = line_.begin();
+            end = line_.end();
+
+            done = handle_line(it, end);
+            if (done)
+                return make_value<std::string>(ss.str());
+
+            // Add the newline
+            ss << std::endl;
+        }
+
+        throw_parse_exception("Unterminated raw string");
     }
 
     std::shared_ptr<value<std::string>>
@@ -3214,7 +3289,7 @@ class parser
 
 /**
  * Utility function to parse a file as a TOML file. Returns the root table.
- * Throws a parse_exception if the file cannot be opened.
+ * Throws a parse_exception if the file cannot be opened or parsed.
  */
 inline std::shared_ptr<table> parse_file(const std::string& filename)
 {
@@ -3229,6 +3304,66 @@ inline std::shared_ptr<table> parse_file(const std::string& filename)
         throw parse_exception{filename + " could not be opened for parsing"};
     parser p{file};
     return p.parse();
+}
+
+/**
+ * Utility function to validate a TOML file. Returns true if the file is valid,
+ * false otherwise. If validate_only is true, the function will only validate
+ * the file without parsing it completely.
+ */
+inline bool validate_file(const std::string& filename, bool validate_only = false)
+{
+    try
+    {
+#if defined(BOOST_NOWIDE_FSTREAM_INCLUDED_HPP)
+        boost::nowide::ifstream file{filename.c_str()};
+#elif defined(NOWIDE_FSTREAM_INCLUDED_HPP)
+        nowide::ifstream file{filename.c_str()};
+#else
+        std::ifstream file{filename};
+#endif
+        if (!file.is_open())
+            throw parse_exception{filename + " could not be opened for validation"};
+        
+        parser p{file};
+        if (validate_only)
+        {
+            // Only validate the syntax, not the full parsing
+            std::string line;
+            while (std::getline(file, line))
+            {
+                // This is a simple validation, real validation would be more complex
+                // For now, just check for basic syntax errors
+                size_t comment_pos = line.find('#');
+                if (comment_pos != std::string::npos)
+                    line = line.substr(0, comment_pos);
+                
+                if (!line.empty())
+                {
+                    // Check for valid key-value pairs or table headers
+                    if (line.find('=') == std::string::npos && 
+                        line.find('[') == std::string::npos)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Parse the entire file to validate it
+            p.parse();
+        }
+        return true;
+    }
+    catch (const parse_exception&)
+    {
+        return false;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
 }
 
 template <class... Ts>
