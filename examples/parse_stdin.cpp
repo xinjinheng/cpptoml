@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <limits>
+#include <chrono>
+#include <cstdlib>
 
 /**
  * A visitor for toml objects that writes to an output stream in the JSON
@@ -103,10 +105,33 @@ class toml_test_writer
     std::ostream& stream_;
 };
 
-int main()
+int main(int argc, char* argv[])
 {
     std::cout.precision(std::numeric_limits<double>::max_digits10);
-    cpptoml::parser p{std::cin};
+
+    // Default timeout is 30 seconds
+    std::chrono::milliseconds timeout{30000};
+
+    // Check if timeout is provided as a command line argument
+    if (argc > 1)
+    {
+        try
+        {
+            timeout = std::chrono::milliseconds{std::stoi(argv[1])};
+        }
+        catch (const std::invalid_argument& e)
+        {
+            std::cerr << "Invalid timeout value: " << argv[1] << std::endl;
+            return 1;
+        }
+        catch (const std::out_of_range& e)
+        {
+            std::cerr << "Timeout value out of range: " << argv[1] << std::endl;
+            return 1;
+        }
+    }
+
+    cpptoml::parser p{std::cin, timeout};
     try
     {
         std::shared_ptr<cpptoml::table> g = p.parse();
@@ -117,6 +142,11 @@ int main()
     catch (const cpptoml::parse_exception& ex)
     {
         std::cerr << "Parsing failed: " << ex.what() << std::endl;
+        return 1;
+    }
+    catch (const cpptoml::stream_read_timeout& ex)
+    {
+        std::cerr << "Stream read timeout: " << ex.what() << std::endl;
         return 1;
     }
     catch (...)
