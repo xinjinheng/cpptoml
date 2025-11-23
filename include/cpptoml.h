@@ -21,6 +21,18 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
+#include <thread>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 #if __cplusplus > 201103L
 #define CPPTOML_DEPRECATED(reason) [[deprecated(reason)]]
@@ -771,6 +783,204 @@ class array_exception : public std::runtime_error
     }
 };
 
+/**
+ * Exception class for table not found errors.
+ */
+class table_not_found_exception : public std::runtime_error
+{
+  public:
+    table_not_found_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for array index out of bounds errors.
+ */
+class array_index_out_of_bounds : public std::runtime_error
+{
+  public:
+    array_index_out_of_bounds(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for null element in array errors.
+ */
+class null_element_in_array : public std::runtime_error
+{
+  public:
+    null_element_in_array(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid null value errors.
+ */
+class invalid_null_value : public std::runtime_error
+{
+  public:
+    invalid_null_value(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for qualified path resolution errors.
+ */
+class qualified_path_resolution_error : public std::runtime_error
+{
+  public:
+    qualified_path_resolution_error(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for null table in array errors.
+ */
+class null_table_in_array : public std::runtime_error
+{
+  public:
+    null_table_in_array(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for file size exceeded errors.
+ */
+class file_size_exceeded : public std::runtime_error
+{
+  public:
+    file_size_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for nesting depth overflow errors.
+ */
+class nesting_depth_overflow : public std::runtime_error
+{
+  public:
+    nesting_depth_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for table entry limit exceeded errors.
+ */
+class table_entry_limit_exceeded : public std::runtime_error
+{
+  public:
+    table_entry_limit_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for memory growth exceeded errors.
+ */
+class memory_growth_exceeded : public std::runtime_error
+{
+  public:
+    memory_growth_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for circular reference detected errors.
+ */
+class circular_reference_detected : public std::runtime_error
+{
+  public:
+    circular_reference_detected(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for signed integer overflow errors.
+ */
+class signed_integer_overflow : public std::runtime_error
+{
+  public:
+    signed_integer_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for signed integer underflow errors.
+ */
+class signed_integer_underflow : public std::runtime_error
+{
+  public:
+    signed_integer_underflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for unsigned integer overflow errors.
+ */
+class unsigned_integer_overflow : public std::runtime_error
+{
+  public:
+    unsigned_integer_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for negative to unsigned conversion errors.
+ */
+class negative_to_unsigned : public std::runtime_error
+{
+  public:
+    negative_to_unsigned(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid numeric format errors.
+ */
+class invalid_numeric_format : public std::runtime_error
+{
+  public:
+    invalid_numeric_format(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid datetime component errors.
+ */
+class invalid_datetime_component : public std::runtime_error
+{
+  public:
+    invalid_datetime_component(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for stream read timeout errors.
+ */
+class stream_read_timeout : public std::runtime_error
+{
+  public:
+    stream_read_timeout(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
 class array : public base
 {
   public:
@@ -837,6 +1047,30 @@ class array : public base
     }
 
     /**
+     * Accesses the element at the specified position. Throws array_index_out_of_bounds if idx is out of range.
+     */
+    std::shared_ptr<base>& operator[](size_t idx)
+    {
+        if (idx >= values_.size())
+        {
+            throw array_index_out_of_bounds("array index out of bounds: " + std::to_string(idx));
+        }
+        return values_[idx];
+    }
+
+    /**
+     * Accesses the element at the specified position. Throws array_index_out_of_bounds if idx is out of range.
+     */
+    const std::shared_ptr<base>& operator[](size_t idx) const
+    {
+        if (idx >= values_.size())
+        {
+            throw array_index_out_of_bounds("array index out of bounds: " + std::to_string(idx));
+        }
+        return values_[idx];
+    }
+
+    /**
      * Obtains an array of value<T>s. Note that elements may be
      * nullptr if they cannot be converted to a value<T>.
      */
@@ -853,7 +1087,7 @@ class array : public base
 
     /**
      * Obtains a option<vector<T>>. The option will be empty if the array
-     * contains values that are not of type T.
+     * contains values that are not of type T. Throws null_element_in_array if any element is null.
      */
     template <class T>
     inline typename array_of_trait<T>::return_type get_array_of() const
@@ -863,6 +1097,10 @@ class array : public base
 
         for (const auto& val : values_)
         {
+            if (!val)
+            {
+                throw null_element_in_array("null element in array");
+            }
             if (auto v = val->as<T>())
                 result.push_back(v->get());
             else
@@ -1120,10 +1358,38 @@ class table_array : public base
     }
 
     /**
-     * Add a table to the end of the array
+     * Accesses the element at the specified position. Throws array_index_out_of_bounds if idx is out of range.
+     */
+    std::shared_ptr<table>& operator[](size_t idx)
+    {
+        if (idx >= array_.size())
+        {
+            throw array_index_out_of_bounds("table array index out of bounds: " + std::to_string(idx));
+        }
+        return array_[idx];
+    }
+
+    /**
+     * Accesses the element at the specified position. Throws array_index_out_of_bounds if idx is out of range.
+     */
+    const std::shared_ptr<table>& operator[](size_t idx) const
+    {
+        if (idx >= array_.size())
+        {
+            throw array_index_out_of_bounds("table array index out of bounds: " + std::to_string(idx));
+        }
+        return array_[idx];
+    }
+
+    /**
+     * Add a table to the end of the array. Throws null_table_in_array if val is null.
      */
     void push_back(const std::shared_ptr<table>& val)
     {
+        if (!val)
+        {
+            throw null_table_in_array("null table in array");
+        }
         array_.push_back(val);
     }
 
@@ -1381,6 +1647,23 @@ class table : public base
     }
 
     /**
+     * Obtains a table for a given key. Throws table_not_found_exception if the table does not exist.
+     */
+    std::shared_ptr<table> get_table_checked(const std::string& key) const
+    {
+        if (!contains(key))
+        {
+            throw table_not_found_exception("table not found: " + key);
+        }
+        auto base_ptr = get(key);
+        if (!base_ptr->is_table())
+        {
+            throw table_not_found_exception("key is not a table: " + key);
+        }
+        return std::static_pointer_cast<table>(base_ptr);
+    }
+
+    /**
      * Obtains a table for a given key, if possible. Will resolve
      * "qualified keys".
      */
@@ -1389,6 +1672,23 @@ class table : public base
         if (contains_qualified(key) && get_qualified(key)->is_table())
             return std::static_pointer_cast<table>(get_qualified(key));
         return nullptr;
+    }
+
+    /**
+     * Obtains a table for a given key. Will resolve "qualified keys". Throws table_not_found_exception if the table does not exist.
+     */
+    std::shared_ptr<table> get_table_qualified_checked(const std::string& key) const
+    {
+        if (!contains_qualified(key))
+        {
+            throw table_not_found_exception("table not found: " + key);
+        }
+        auto base_ptr = get_qualified(key);
+        if (!base_ptr->is_table())
+        {
+            throw table_not_found_exception("key is not a table: " + key);
+        }
+        return std::static_pointer_cast<table>(base_ptr);
     }
 
     /**
@@ -1453,7 +1753,7 @@ class table : public base
     /**
      * Helper function that attempts to get a value corresponding
      * to the template parameter from a given key. Will resolve "qualified
-     * keys".
+     * keys". Throws qualified_path_resolution_error if the path cannot be resolved.
      */
     template <class T>
     option<T> get_qualified_as(const std::string& key) const
@@ -1462,9 +1762,9 @@ class table : public base
         {
             return get_impl<T>(get_qualified(key));
         }
-        catch (const std::out_of_range&)
+        catch (const std::out_of_range& e)
         {
-            return {};
+            throw qualified_path_resolution_error("qualified path resolution error: " + key + ": " + e.what());
         }
     }
 
@@ -1532,10 +1832,14 @@ class table : public base
     }
 
     /**
-     * Adds an element to the keytable.
+     * Adds an element to the keytable. Throws invalid_null_value if value is null.
      */
     void insert(const std::string& key, const std::shared_ptr<base>& value)
     {
+        if (!value)
+        {
+            throw invalid_null_value("invalid null value for key: " + key);
+        }
         map_[key] = value;
     }
 
@@ -1878,9 +2182,58 @@ class parser
     /**
      * Parsers are constructed from streams.
      */
-    parser(std::istream& stream) : input_(stream)
+    parser(std::istream& stream) : input_(stream), timeout_(std::chrono::milliseconds::max())
     {
         // nothing
+    }
+
+    /**
+     * Parsers are constructed from streams with a timeout.
+     */
+    parser(std::istream& stream, std::chrono::milliseconds timeout) : input_(stream), timeout_(timeout)
+    {
+        // nothing
+    }
+
+    /**
+     * Parsers are constructed from streams with a timeout and resource limits.
+     */
+    parser(std::istream& stream, std::chrono::milliseconds timeout, std::size_t max_line_length, std::size_t max_table_depth, std::size_t max_array_size) 
+        : input_(stream), timeout_(timeout), max_line_length_(max_line_length), max_table_depth_(max_table_depth), max_array_size_(max_array_size)
+    {
+        // nothing
+    }
+
+    /**
+     * Sets the timeout for stream operations.
+     */
+    void set_timeout(std::chrono::milliseconds timeout)
+    {
+        timeout_ = timeout;
+    }
+
+    /**
+     * Sets the maximum line length.
+     */
+    void set_max_line_length(std::size_t max_line_length)
+    {
+        max_line_length_ = max_line_length;
+    }
+
+    /**
+     * Sets the maximum table depth.
+     */
+    void set_max_table_depth(std::size_t max_table_depth)
+    {
+        max_table_depth_ = max_table_depth;
+    }
+
+    /**
+     * Sets the maximum array size.
+     */
+    void set_max_array_size(std::size_t max_array_size)
+    {
+        max_array_size_ = max_array_size;
     }
 
     parser& operator=(const parser& parser) = delete;
@@ -1895,8 +2248,64 @@ class parser
 
         table* curr_table = root.get();
 
-        while (detail::getline(input_, line_))
+        while (true)
         {
+            // Check timeout before each read
+            if (!first_read_)
+            {
+                check_timeout();
+            }
+            else
+            {
+                first_read_ = false;
+            }
+
+            // Try to read a line with timeout
+            bool read_success = false;
+            auto start_time = std::chrono::steady_clock::now();
+            while (true)
+            {
+                if (input_.rdbuf()->in_avail() > 0)
+                {
+                    if (detail::getline(input_, line_))
+                    {
+                        read_success = true;
+                        update_last_read_time();
+                        break;
+                    }
+                    else
+                    {
+                        // End of file
+                        return root;
+                    }
+                }
+
+                // Check if we've timed out
+                if (timeout_ != std::chrono::milliseconds::max())
+                {
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - start_time > timeout_)
+                    {
+                        throw stream_read_timeout("stream read timeout");
+                    }
+                }
+
+                // Sleep for a short time to avoid busy waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            if (!read_success)
+            {
+                // End of file
+                return root;
+            }
+
+            // Check line length
+            if (max_line_length_ > 0 && line_.size() > max_line_length_)
+            {
+                throw_parse_exception("Line " + std::to_string(line_number_ + 1) + " exceeds maximum length of " + std::to_string(max_line_length_));
+            }
+
             line_number_++;
             auto it = line_.begin();
             auto end = line_.end();
@@ -1919,6 +2328,31 @@ class parser
     }
 
   private:
+    /**
+     * Checks if the stream read operation has timed out.
+     */
+    void check_timeout() const
+    {
+        if (timeout_ == std::chrono::milliseconds::max())
+        {
+            return;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_read_time_ > timeout_)
+        {
+            throw stream_read_timeout("stream read timeout");
+        }
+    }
+
+    /**
+     * Updates the last read time.
+     */
+    void update_last_read_time()
+    {
+        last_read_time_ = std::chrono::steady_clock::now();
+    }
+
 #if defined _MSC_VER
     __declspec(noreturn)
 #elif defined __GNUC__
@@ -1962,6 +2396,13 @@ class parser
                 full_table_name += '.';
             full_table_name += part;
 
+            // Check table depth
+            current_table_depth_++;
+            if (max_table_depth_ > 0 && current_table_depth_ > max_table_depth_)
+            {
+                throw_parse_exception("Table depth exceeds maximum limit of " + std::to_string(max_table_depth_));
+            }
+
             if (curr_table->contains(part))
             {
 #if !defined(__PGI)
@@ -1989,7 +2430,13 @@ class parser
             }
         };
 
+        // Save current table depth before processing
+        std::size_t original_depth = current_table_depth_;
+        
         key_part_handler(parse_key(it, end, key_end, key_part_handler));
+        
+        // Restore original table depth after processing
+        current_table_depth_ = original_depth;
 
         if (it == end)
             throw_parse_exception(
@@ -2048,6 +2495,13 @@ class parser
             if (!full_ta_name.empty())
                 full_ta_name += '.';
             full_ta_name += part;
+
+            // Check table depth
+            current_table_depth_++;
+            if (max_table_depth_ > 0 && current_table_depth_ > max_table_depth_)
+            {
+                throw_parse_exception("Table depth exceeds maximum limit of " + std::to_string(max_table_depth_));
+            }
 
             if (curr_table->contains(part))
             {
@@ -2138,6 +2592,13 @@ class parser
         auto key_end = [](char c) { return c == '='; };
 
         auto key_part_handler = [&](const std::string& part) {
+            // Check table depth
+            current_table_depth_++;
+            if (max_table_depth_ > 0 && current_table_depth_ > max_table_depth_)
+            {
+                throw_parse_exception("Table depth exceeds maximum limit of " + std::to_string(max_table_depth_));
+            }
+            
             // two cases: this key part exists already, in which case it must
             // be a table, or it doesn't exist in which case we must create
             // an implicitly defined table
@@ -2162,7 +2623,13 @@ class parser
             }
         };
 
+        // Save current table depth before processing
+        std::size_t original_depth = current_table_depth_;
+        
         auto key = parse_key(it, end, key_end, key_part_handler);
+        
+        // Restore original table depth after processing
+        current_table_depth_ = original_depth;
 
         if (curr_table->contains(key))
             throw_parse_exception("Key " + key + " already present");
@@ -3048,6 +3515,12 @@ class parser
         auto arr = make_array();
         while (it != end && *it != ']')
         {
+            // Check array size
+            if (max_array_size_ > 0 && arr->get().size() >= max_array_size_)
+            {
+                throw_parse_exception("Array size exceeds maximum limit of " + std::to_string(max_array_size_));
+            }
+            
             auto val = parse_value(it, end);
             if (auto v = val->as<Value>())
                 arr->get().push_back(val);
@@ -3073,6 +3546,12 @@ class parser
 
         while (it != end && *it != ']')
         {
+            // Check array size
+            if (max_array_size_ > 0 && arr->get().size() >= max_array_size_)
+            {
+                throw_parse_exception("Array size exceeds maximum limit of " + std::to_string(max_array_size_));
+            }
+            
             if (*it != delim)
                 throw_parse_exception("Unexpected character in array");
 
@@ -3209,7 +3688,17 @@ class parser
 
     std::istream& input_;
     std::string line_;
-    std::size_t line_number_ = 0;
+    std::size_t line_number_{0};
+    std::chrono::milliseconds timeout_;
+    std::chrono::steady_clock::time_point last_read_time_;
+    bool first_read_{true};
+    
+    // Resource monitoring and boundary control
+    std::size_t max_line_length_{0}; // 0 means no limit
+    std::size_t max_table_depth_{0}; // 0 means no limit
+    std::size_t max_array_size_{0}; // 0 means no limit
+    std::size_t current_table_depth_{0};
+    std::size_t current_array_size_{0};
 };
 
 /**
@@ -3228,6 +3717,124 @@ inline std::shared_ptr<table> parse_file(const std::string& filename)
     if (!file.is_open())
         throw parse_exception{filename + " could not be opened for parsing"};
     parser p{file};
+    return p.parse();
+}
+
+/**
+ * Utility function to parse a file as a TOML file with a timeout. Returns the root table.
+ * Throws a parse_exception if the file cannot be opened.
+ * Throws a stream_read_timeout if the file read operation times out.
+ */
+inline std::shared_ptr<table> parse_file(const std::string& filename, std::chrono::milliseconds timeout)
+{
+    std::ifstream file;
+
+#if defined(_WIN32)
+    // Windows specific file open with timeout
+    HANDLE hFile = CreateFileA(filename.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        throw parse_exception{filename + " could not be opened for parsing"};
+    }
+
+    OVERLAPPED overlapped = {0};
+    overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    if (overlapped.hEvent == nullptr)
+    {
+        CloseHandle(hFile);
+        throw parse_exception{filename + " could not create event for file I/O"};
+    }
+
+    // Wait for the file to be available
+    DWORD waitResult = WaitForSingleObject(overlapped.hEvent, timeout.count());
+    if (waitResult == WAIT_TIMEOUT)
+    {
+        CloseHandle(overlapped.hEvent);
+        CloseHandle(hFile);
+        throw stream_read_timeout("file open timeout: " + filename);
+    }
+    else if (waitResult == WAIT_FAILED)
+    {
+        CloseHandle(overlapped.hEvent);
+        CloseHandle(hFile);
+        throw parse_exception{filename + " could not wait for file I/O"};
+    }
+
+    // Convert HANDLE to file descriptor
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(hFile), 0);
+    if (fd == -1)
+    {
+        CloseHandle(overlapped.hEvent);
+        CloseHandle(hFile);
+        throw parse_exception{filename + " could not convert file handle to file descriptor"};
+    }
+
+    // Create a std::ifstream from the file descriptor
+    file.open(fd);
+    if (!file.is_open())
+    {
+        _close(fd);
+        CloseHandle(overlapped.hEvent);
+        throw parse_exception{filename + " could not open file stream from file descriptor"};
+    }
+
+    // Close the event handle since we don't need it anymore
+    CloseHandle(overlapped.hEvent);
+#else
+    // Linux specific file open with timeout
+    int fd = open(filename.c_str(), O_RDONLY | O_NONBLOCK);
+    if (fd == -1)
+    {
+        throw parse_exception{filename + " could not be opened for parsing"};
+    }
+
+    // Wait for the file to be available
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(fd, &readfds);
+
+    struct timeval tv;
+    tv.tv_sec = timeout.count() / 1000;
+    tv.tv_usec = (timeout.count() % 1000) * 1000;
+
+    int selectResult = select(fd + 1, &readfds, nullptr, nullptr, &tv);
+    if (selectResult == -1)
+    {
+        close(fd);
+        throw parse_exception{filename + " could not select file descriptor"};
+    }
+    else if (selectResult == 0)
+    {
+        close(fd);
+        throw stream_read_timeout("file open timeout: " + filename);
+    }
+
+    // Set the file descriptor back to blocking mode
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+    {
+        close(fd);
+        throw parse_exception{filename + " could not get file descriptor flags"};
+    }
+
+    flags &= ~O_NONBLOCK;
+    if (fcntl(fd, F_SETFL, flags) == -1)
+    {
+        close(fd);
+        throw parse_exception{filename + " could not set file descriptor flags"};
+    }
+
+    // Create a std::ifstream from the file descriptor
+    file.open(fd);
+    if (!file.is_open())
+    {
+        close(fd);
+        throw parse_exception{filename + " could not open file stream from file descriptor"};
+    }
+#endif
+
+    // Parse the file with timeout
+    parser p{file, timeout};
     return p.parse();
 }
 
