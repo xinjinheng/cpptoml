@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <chrono>
 
 #if __cplusplus > 201103L
 #define CPPTOML_DEPRECATED(reason) [[deprecated(reason)]]
@@ -38,6 +39,31 @@
 
 namespace cpptoml
 {
+/**
+ * Resource limits configuration for cpptoml parser.
+ */
+struct resource_limits
+{
+    std::size_t max_file_size = 200 * 1024 * 1024; // 200MB
+    std::size_t max_nesting_depth = 128;
+    std::size_t max_table_entries = 20000;
+    std::size_t max_memory_growth_per_ms = 10 * 1024 * 1024; // 10MB/ms
+    bool terminate_on_memory_exceed = true;
+};
+
+/**
+ * Global resource limits for all parsers.
+ */
+extern resource_limits global_resource_limits;
+
+/**
+ * Configure global resource limits for cpptoml parsers.
+ */
+inline void configure_resource_limits(const resource_limits& limits)
+{
+    global_resource_limits = limits;
+}
+
 class writer; // forward declaration
 class base;   // forward declaration
 #if defined(CPPTOML_USE_MAP)
@@ -99,6 +125,26 @@ class option
 
 struct local_date
 {
+    local_date() : year(0), month(0), day(0) {}
+    local_date(int y, int m, int d)
+        : year(y), month(m), day(d)
+    {
+        if (month < 1 || month > 12)
+            throw invalid_datetime_component{"month", std::to_string(month), "1-12"};
+        
+        int max_day = 31;
+        if (month == 4 || month == 6 || month == 9 || month == 11)
+            max_day = 30;
+        else if (month == 2)
+        {
+            bool is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            max_day = is_leap ? 29 : 28;
+        }
+        
+        if (day < 1 || day > max_day)
+            throw invalid_datetime_component{"day", std::to_string(day), "1-" + std::to_string(max_day)};
+    }
+    
     int year = 0;
     int month = 0;
     int day = 0;
@@ -106,6 +152,20 @@ struct local_date
 
 struct local_time
 {
+    local_time() : hour(0), minute(0), second(0), microsecond(0) {}
+    local_time(int h, int m, int s, int us = 0)
+        : hour(h), minute(m), second(s), microsecond(us)
+    {
+        if (hour < 0 || hour > 23)
+            throw invalid_datetime_component{"hour", std::to_string(hour), "0-23"};
+        if (minute < 0 || minute > 59)
+            throw invalid_datetime_component{"minute", std::to_string(minute), "0-59"};
+        if (second < 0 || second > 60)
+            throw invalid_datetime_component{"second", std::to_string(second), "0-60"};
+        if (microsecond < 0 || microsecond > 999999)
+            throw invalid_datetime_component{"microsecond", std::to_string(microsecond), "0-999999"};
+    }
+    
     int hour = 0;
     int minute = 0;
     int second = 0;
@@ -114,6 +174,16 @@ struct local_time
 
 struct zone_offset
 {
+    zone_offset() : hour_offset(0), minute_offset(0) {}
+    zone_offset(int h, int m)
+        : hour_offset(h), minute_offset(m)
+    {
+        if (hour_offset < -12 || hour_offset > 14)
+            throw invalid_datetime_component{"hour_offset", std::to_string(hour_offset), "-12 to +14"};
+        if (minute_offset != 0 && minute_offset != 30 && minute_offset != 45)
+            throw invalid_datetime_component{"minute_offset", std::to_string(minute_offset), "0, 30, or 45"};
+    }
+    
     int hour_offset = 0;
     int minute_offset = 0;
 };
@@ -342,13 +412,13 @@ struct value_traits<
     static value_type construct(T&& val)
     {
         if (val < (std::numeric_limits<int64_t>::min)())
-            throw std::underflow_error{"constructed value cannot be "
-                                       "represented by a 64-bit signed "
-                                       "integer"};
+            throw signed_integer_underflow{"constructed value cannot be "
+                                           "represented by a 64-bit signed "
+                                           "integer"};
 
         if (val > (std::numeric_limits<int64_t>::max)())
-            throw std::overflow_error{"constructed value cannot be represented "
-                                      "by a 64-bit signed integer"};
+            throw signed_integer_overflow{"constructed value cannot be represented "
+                                          "by a 64-bit signed integer"};
 
         return static_cast<int64_t>(val);
     }
@@ -367,10 +437,30 @@ struct value_traits<
     static value_type construct(T&& val)
     {
         if (val > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)()))
-            throw std::overflow_error{"constructed value cannot be represented "
-                                      "by a 64-bit signed integer"};
+            throw unsigned_integer_overflow{"constructed value cannot be represented "
+                                            "by a 64-bit signed integer"};
 
         return static_cast<int64_t>(val);
+    }
+};
+
+template <class T>
+struct value_traits<
+    T, typename std::enable_if<
+           !valid_value_or_string_convertible<T>::value
+           && std::is_signed<typename std::decay<T>::type>::value
+           && std::is_convertible<T, unsigned long long>::value>::type>
+{
+    using value_type = unsigned long long;
+
+    using type = value<unsigned long long>;
+
+    static value_type construct(T&& val)
+    {
+        if (val < 0)
+            throw negative_to_unsigned{"cannot convert negative value to unsigned type"};
+
+        return static_cast<unsigned long long>(val);
     }
 };
 
@@ -771,6 +861,205 @@ class array_exception : public std::runtime_error
     }
 };
 
+/**
+ * Exception class for table not found errors.
+ */
+class table_not_found_exception : public std::runtime_error
+{
+  public:
+    table_not_found_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for array index out of bounds errors.
+ */
+class array_index_out_of_bounds : public std::runtime_error
+{
+  public:
+    array_index_out_of_bounds(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for null element in array errors.
+ */
+class null_element_in_array : public std::runtime_error
+{
+  public:
+    null_element_in_array(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid null value errors.
+ */
+class invalid_null_value : public std::runtime_error
+{
+  public:
+    invalid_null_value(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for qualified path resolution errors.
+ */
+class qualified_path_resolution_error : public std::runtime_error
+{
+  public:
+    qualified_path_resolution_error(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for null table in array errors.
+ */
+class null_table_in_array : public std::runtime_error
+{
+  public:
+    null_table_in_array(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for stream read timeout errors.
+ */
+class stream_read_timeout : public std::runtime_error
+{
+  public:
+    stream_read_timeout(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for file size exceeded errors.
+ */
+class file_size_exceeded : public std::runtime_error
+{
+  public:
+    file_size_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for nesting depth overflow errors.
+ */
+class nesting_depth_overflow : public std::runtime_error
+{
+  public:
+    nesting_depth_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for table entry limit exceeded errors.
+ */
+class table_entry_limit_exceeded : public std::runtime_error
+{
+  public:
+    table_entry_limit_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for memory growth exceeded errors.
+ */
+class memory_growth_exceeded : public std::runtime_error
+{
+  public:
+    memory_growth_exceeded(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for circular reference detected errors.
+ */
+class circular_reference_detected : public std::runtime_error
+{
+  public:
+    circular_reference_detected(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for signed integer overflow errors.
+ */
+class signed_integer_overflow : public std::runtime_error
+{
+  public:
+    signed_integer_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for signed integer underflow errors.
+ */
+class signed_integer_underflow : public std::runtime_error
+{
+  public:
+    signed_integer_underflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for unsigned integer overflow errors.
+ */
+class unsigned_integer_overflow : public std::runtime_error
+{
+  public:
+    unsigned_integer_overflow(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for negative to unsigned conversion errors.
+ */
+class negative_to_unsigned : public std::runtime_error
+{
+  public:
+    negative_to_unsigned(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid numeric format errors.
+ */
+class invalid_numeric_format : public std::runtime_error
+{
+  public:
+    invalid_numeric_format(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+/**
+ * Exception class for invalid datetime component errors.
+ */
+class invalid_datetime_component : public std::runtime_error
+{
+  public:
+    invalid_datetime_component(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+
 class array : public base
 {
   public:
@@ -833,7 +1122,36 @@ class array : public base
 
     std::shared_ptr<base> at(size_t idx) const
     {
-        return values_.at(idx);
+        auto ptr = values_.at(idx);
+        if (!ptr)
+            throw null_element_in_array("Null element found in array at index: " + std::to_string(idx));
+        return ptr;
+    }
+
+    /**
+     * Operator[] for array access. Throws array_index_out_of_bounds if index is out of range.
+     */
+    std::shared_ptr<base>& operator[](size_t idx)
+    {
+        if (idx >= values_.size())
+            throw array_index_out_of_bounds("Array index out of bounds: " + std::to_string(idx));
+        auto& ptr = values_[idx];
+        if (!ptr)
+            throw null_element_in_array("Null element found in array at index: " + std::to_string(idx));
+        return ptr;
+    }
+
+    /**
+     * Operator[] for array access. Const version. Throws array_index_out_of_bounds if index is out of range.
+     */
+    const std::shared_ptr<base>& operator[](size_t idx) const
+    {
+        if (idx >= values_.size())
+            throw array_index_out_of_bounds("Array index out of bounds: " + std::to_string(idx));
+        auto& ptr = values_[idx];
+        if (!ptr)
+            throw null_element_in_array("Null element found in array at index: " + std::to_string(idx));
+        return ptr;
     }
 
     /**
@@ -853,7 +1171,7 @@ class array : public base
 
     /**
      * Obtains a option<vector<T>>. The option will be empty if the array
-     * contains values that are not of type T.
+     * contains values that are not of type T. Throws null_element_in_array if any element is null.
      */
     template <class T>
     inline typename array_of_trait<T>::return_type get_array_of() const
@@ -861,8 +1179,11 @@ class array : public base
         std::vector<T> result;
         result.reserve(values_.size());
 
-        for (const auto& val : values_)
+        for (size_t i = 0; i < values_.size(); ++i)
         {
+            const auto& val = values_[i];
+            if (!val)
+                throw null_element_in_array("Null element found in array at index: " + std::to_string(i));
             if (auto v = val->as<T>())
                 result.push_back(v->get());
             else
@@ -1120,19 +1441,60 @@ class table_array : public base
     }
 
     /**
-     * Add a table to the end of the array
+     * Add a table to the end of the array. Throws null_table_in_array if val is null.
      */
     void push_back(const std::shared_ptr<table>& val)
     {
+        if (!val)
+            throw null_table_in_array("Cannot push null table into table array");
         array_.push_back(val);
     }
 
     /**
-     * Insert a table into the array
+     * Insert a table into the array. Throws null_table_in_array if value is null.
      */
     iterator insert(iterator position, const std::shared_ptr<table>& value)
     {
+        if (!value)
+            throw null_table_in_array("Cannot insert null table into table array");
         return array_.insert(position, value);
+    }
+
+    /**
+     * Operator[] for table array access. Throws array_index_out_of_bounds if index is out of range.
+     */
+    std::shared_ptr<table>& operator[](size_t idx)
+    {
+        if (idx >= array_.size())
+            throw array_index_out_of_bounds("Table array index out of bounds: " + std::to_string(idx));
+        auto& ptr = array_[idx];
+        if (!ptr)
+            throw null_table_in_array("Null table found in table array at index: " + std::to_string(idx));
+        return ptr;
+    }
+
+    /**
+     * Operator[] for table array access. Const version. Throws array_index_out_of_bounds if index is out of range.
+     */
+    const std::shared_ptr<table>& operator[](size_t idx) const
+    {
+        if (idx >= array_.size())
+            throw array_index_out_of_bounds("Table array index out of bounds: " + std::to_string(idx));
+        auto& ptr = array_[idx];
+        if (!ptr)
+            throw null_table_in_array("Null table found in table array at index: " + std::to_string(idx));
+        return ptr;
+    }
+
+    /**
+     * at() method for table array access. Throws array_index_out_of_bounds if index is out of range.
+     */
+    std::shared_ptr<table> at(size_t idx) const
+    {
+        auto ptr = array_.at(idx);
+        if (!ptr)
+            throw null_table_in_array("Null table found in table array at index: " + std::to_string(idx));
+        return ptr;
     }
 
     /**
@@ -1381,6 +1743,19 @@ class table : public base
     }
 
     /**
+     * Obtains a table for a given key. Throws table_not_found_exception if the key does not exist or is not a table.
+     */
+    std::shared_ptr<table> get_table_checked(const std::string& key) const
+    {
+        if (!contains(key))
+            throw table_not_found_exception("Table not found for key: " + key);
+        auto base_ptr = get(key);
+        if (!base_ptr->is_table())
+            throw table_not_found_exception("Value for key: " + key + " is not a table");
+        return std::static_pointer_cast<table>(base_ptr);
+    }
+
+    /**
      * Obtains a table for a given key, if possible. Will resolve
      * "qualified keys".
      */
@@ -1389,6 +1764,19 @@ class table : public base
         if (contains_qualified(key) && get_qualified(key)->is_table())
             return std::static_pointer_cast<table>(get_qualified(key));
         return nullptr;
+    }
+
+    /**
+     * Obtains a table for a given key using qualified path. Throws table_not_found_exception if the path does not exist or is not a table.
+     */
+    std::shared_ptr<table> get_table_qualified_checked(const std::string& key) const
+    {
+        if (!contains_qualified(key))
+            throw table_not_found_exception("Table not found for qualified key: " + key);
+        auto base_ptr = get_qualified(key);
+        if (!base_ptr->is_table())
+            throw table_not_found_exception("Value for qualified key: " + key + " is not a table");
+        return std::static_pointer_cast<table>(base_ptr);
     }
 
     /**
@@ -1532,10 +1920,12 @@ class table : public base
     }
 
     /**
-     * Adds an element to the keytable.
+     * Adds an element to the keytable. Throws invalid_null_value if value is null.
      */
     void insert(const std::string& key, const std::shared_ptr<base>& value)
     {
+        if (!value)
+            throw invalid_null_value("Cannot insert null value for key: " + key);
         map_[key] = value;
     }
 
@@ -1602,22 +1992,35 @@ class table : public base
         parts.pop_back();
 
         auto cur_table = this;
+        std::string current_path;
         for (const auto& part : parts)
         {
-            cur_table = cur_table->get_table(part).get();
+            if (!current_path.empty())
+                current_path += '.';
+            current_path += part;
+
+            auto table_ptr = cur_table->get_table(part);
+            cur_table = table_ptr.get();
             if (!cur_table)
             {
                 if (!p)
                     return false;
 
-                throw std::out_of_range{key + " is not a valid key"};
+                throw qualified_path_resolution_error("Path resolution failed at: " + current_path + ". The value is either missing or not a table.");
             }
         }
 
         if (!p)
             return cur_table->map_.count(last_key) != 0;
 
-        *p = cur_table->map_.at(last_key);
+        try
+        {
+            *p = cur_table->map_.at(last_key);
+        }
+        catch (const std::out_of_range&)
+        {
+            throw qualified_path_resolution_error("Key not found in path: " + key);
+        }
         return true;
     }
 
@@ -1879,15 +2282,93 @@ class parser
      * Parsers are constructed from streams.
      */
     parser(std::istream& stream) : input_(stream)
+        , timeout_(std::chrono::milliseconds::max())
+        , start_time_(std::chrono::steady_clock::now())
+        , bytes_read_(0)
+        , current_memory_(0)
+        , max_memory_(0)
+        , current_elements_(0)
+        , max_elements_(0)
     {
         // nothing
+    }
+
+    /**
+     * Parsers are constructed from streams with a timeout.
+     */
+    parser(std::istream& stream, std::chrono::milliseconds timeout) : input_(stream)
+        , timeout_(timeout)
+        , start_time_(std::chrono::steady_clock::now())
+        , bytes_read_(0)
+        , current_memory_(0)
+        , max_memory_(0)
+        , current_elements_(0)
+        , max_elements_(0)
+    {
+        // nothing
+    }
+
+    /**
+     * Set the maximum memory limit for parsing.
+     */
+    void set_max_memory(std::size_t max_memory)
+    {
+        max_memory_ = max_memory;
+    }
+
+    /**
+     * Set the maximum number of elements for parsing.
+     */
+    void set_max_elements(std::size_t max_elements)
+    {
+        max_elements_ = max_elements;
+    }
+
+    /**
+     * Set the timeout for parsing operations.
+     */
+    void set_timeout(std::chrono::milliseconds timeout)
+    {
+        timeout_ = timeout;
     }
 
     parser& operator=(const parser& parser) = delete;
 
     /**
+     * Check if parsing has timed out or exceeded resource limits.
+     * @throw stream_read_timeout if timeout exceeded
+     * @throw memory_limit_exceeded if memory limit exceeded
+     * @throw element_limit_exceeded if element limit exceeded
+     */
+    void check_limits()
+    {
+        // Check timeout
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_);
+        if (elapsed > timeout_)
+        {
+            throw stream_read_timeout("Parsing timed out");
+        }
+
+        // Check memory limit
+        if (max_memory_ > 0 && current_memory_ > max_memory_)
+        {
+            throw memory_limit_exceeded("Memory limit exceeded");
+        }
+
+        // Check element limit
+        if (max_elements_ > 0 && current_elements_ > max_elements_)
+        {
+            throw element_limit_exceeded("Element limit exceeded");
+        }
+    }
+
+    /**
      * Parses the stream this parser was created on until EOF.
      * @throw parse_exception if there are errors in parsing
+     * @throw stream_read_timeout if timeout exceeded
+     * @throw memory_limit_exceeded if memory limit exceeded
+     * @throw element_limit_exceeded if element limit exceeded
      */
     std::shared_ptr<table> parse()
     {
@@ -1897,6 +2378,9 @@ class parser
 
         while (detail::getline(input_, line_))
         {
+            // Check limits before processing each line
+            check_limits();
+
             line_number_++;
             auto it = line_.begin();
             auto end = line_.end();
@@ -1986,6 +2470,11 @@ class parser
                 inserted = true;
                 curr_table->insert(part, make_table());
                 curr_table = static_cast<table*>(curr_table->get(part).get());
+                
+                // Update resource usage for new table
+                current_elements_++;
+                current_memory_ += sizeof(table);
+                check_limits();
             }
         };
 
@@ -2107,6 +2596,11 @@ class parser
                         curr_table->get(part));
                     arr->get().push_back(make_table());
                     curr_table = arr->get().back().get();
+                    
+                    // Update resource usage for new table array and table
+                    current_elements_ += 2;
+                    current_memory_ += sizeof(table_array) + sizeof(table);
+                    check_limits();
                 }
                 // otherwise, create the implicitly defined table and move
                 // down to it
@@ -2115,6 +2609,11 @@ class parser
                     curr_table->insert(part, make_table());
                     curr_table
                         = static_cast<table*>(curr_table->get(part).get());
+                    
+                    // Update resource usage for new table
+                    current_elements_++;
+                    current_memory_ += sizeof(table);
+                    check_limits();
                 }
             }
         };
@@ -2159,6 +2658,11 @@ class parser
                 auto newtable = make_table();
                 curr_table->insert(part, newtable);
                 curr_table = newtable.get();
+                
+                // Update resource usage for new table
+                current_elements_++;
+                current_memory_ += sizeof(table);
+                check_limits();
             }
         };
 
@@ -2170,7 +2674,14 @@ class parser
             throw_parse_exception("Value must follow after a '='");
         ++it;
         consume_whitespace(it, end);
-        curr_table->insert(key, parse_value(it, end));
+        auto value = parse_value(it, end);
+        curr_table->insert(key, value);
+        
+        // Update resource usage for new value
+        current_elements_++;
+        current_memory_ += sizeof(*value);
+        check_limits();
+        
         consume_whitespace(it, end);
     }
 
@@ -3046,6 +3557,12 @@ class parser
                                              std::string::iterator& end)
     {
         auto arr = make_array();
+        
+        // Update resource usage for new array
+        current_elements_++;
+        current_memory_ += sizeof(array);
+        check_limits();
+        
         while (it != end && *it != ']')
         {
             auto val = parse_value(it, end);
@@ -3053,6 +3570,12 @@ class parser
                 arr->get().push_back(val);
             else
                 throw_parse_exception("Arrays must be homogeneous");
+            
+            // Update resource usage for new array element
+            current_elements_++;
+            current_memory_ += sizeof(*val);
+            check_limits();
+            
             skip_whitespace_and_comments(it, end);
             if (*it != ',')
                 break;
@@ -3097,6 +3620,12 @@ class parser
                                               std::string::iterator& end)
     {
         auto tbl = make_table();
+        
+        // Update resource usage for new inline table
+        current_elements_++;
+        current_memory_ += sizeof(table);
+        check_limits();
+        
         do
         {
             ++it;
@@ -3210,6 +3739,14 @@ class parser
     std::istream& input_;
     std::string line_;
     std::size_t line_number_ = 0;
+    std::chrono::milliseconds timeout_;
+    std::chrono::steady_clock::time_point start_time_;
+    std::size_t bytes_read_;
+    std::size_t file_size_ = 0;
+    std::size_t current_memory_ = 0;
+    std::size_t max_memory_ = 0;
+    std::size_t current_elements_ = 0;
+    std::size_t max_elements_ = 0;
 };
 
 /**
