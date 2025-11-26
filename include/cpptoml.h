@@ -99,6 +99,27 @@ class option
 
 struct local_date
 {
+    local_date() : year(0), month(0), day(0) {}
+    local_date(int y, int m, int d)
+        : year(y), month(m), day(d)
+    {
+        if (m < 1 || m > 12)
+            throw invalid_datetime_component("month", std::to_string(m), "1-12");
+        if (d < 1)
+            throw invalid_datetime_component("day", std::to_string(d), "1-31");
+        // Check max day based on month and leap year
+        int max_day = 31;
+        if (m == 4 || m == 6 || m == 9 || m == 11)
+            max_day = 30;
+        else if (m == 2)
+        {
+            bool is_leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+            max_day = is_leap ? 29 : 28;
+        }
+        if (d > max_day)
+            throw invalid_datetime_component("day", std::to_string(d), "1-" + std::to_string(max_day));
+    }
+
     int year = 0;
     int month = 0;
     int day = 0;
@@ -106,6 +127,20 @@ struct local_date
 
 struct local_time
 {
+    local_time() : hour(0), minute(0), second(0), microsecond(0) {}
+    local_time(int h, int m, int s, int us = 0)
+        : hour(h), minute(m), second(s), microsecond(us)
+    {
+        if (h < 0 || h > 23)
+            throw invalid_datetime_component("hour", std::to_string(h), "0-23");
+        if (m < 0 || m > 59)
+            throw invalid_datetime_component("minute", std::to_string(m), "0-59");
+        if (s < 0 || s > 60)
+            throw invalid_datetime_component("second", std::to_string(s), "0-60");
+        if (us < 0 || us > 999999)
+            throw invalid_datetime_component("microsecond", std::to_string(us), "0-999999");
+    }
+
     int hour = 0;
     int minute = 0;
     int second = 0;
@@ -114,16 +149,33 @@ struct local_time
 
 struct zone_offset
 {
+    zone_offset() : hour_offset(0), minute_offset(0) {}
+    zone_offset(int h, int m)
+        : hour_offset(h), minute_offset(m)
+    {
+        if (h < -12 || h > 14)
+            throw invalid_datetime_component("hour_offset", std::to_string(h), "-12 to +14");
+        if (m != 0 && m != 30 && m != 45)
+            throw invalid_datetime_component("minute_offset", std::to_string(m), "0, 30, or 45");
+    }
+
     int hour_offset = 0;
     int minute_offset = 0;
 };
 
 struct local_datetime : local_date, local_time
 {
+    local_datetime() : local_date(), local_time() {}
+    local_datetime(int y, int m, int d, int h, int mi, int s, int us = 0)
+        : local_date(y, m, d), local_time(h, mi, s, us) {}
 };
 
 struct offset_datetime : local_datetime, zone_offset
 {
+    offset_datetime() : local_datetime(), zone_offset() {}
+    offset_datetime(int y, int m, int d, int h, int mi, int s, int us = 0, int ho = 0, int mo = 0)
+        : local_datetime(y, m, d, h, mi, s, us), zone_offset(ho, mo) {}
+
     static inline struct offset_datetime from_zoned(const struct tm& t)
     {
         offset_datetime dt;
@@ -342,13 +394,10 @@ struct value_traits<
     static value_type construct(T&& val)
     {
         if (val < (std::numeric_limits<int64_t>::min)())
-            throw std::underflow_error{"constructed value cannot be "
-                                       "represented by a 64-bit signed "
-                                       "integer"};
+            throw signed_integer_underflow{std::to_string(val)};
 
         if (val > (std::numeric_limits<int64_t>::max)())
-            throw std::overflow_error{"constructed value cannot be represented "
-                                      "by a 64-bit signed integer"};
+            throw signed_integer_overflow{std::to_string(val)};
 
         return static_cast<int64_t>(val);
     }
@@ -367,8 +416,7 @@ struct value_traits<
     static value_type construct(T&& val)
     {
         if (val > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)()))
-            throw std::overflow_error{"constructed value cannot be represented "
-                                      "by a 64-bit signed integer"};
+            throw unsigned_integer_overflow{std::to_string(val)};
 
         return static_cast<int64_t>(val);
     }
@@ -771,6 +819,168 @@ class array_exception : public std::runtime_error
     }
 };
 
+class table_not_found_exception : public std::runtime_error
+{
+  public:
+    explicit table_not_found_exception(const std::string& key)
+        : std::runtime_error{"Table not found: " + key}
+    {
+    }
+};
+
+class array_index_out_of_bounds : public std::runtime_error
+{
+  public:
+    explicit array_index_out_of_bounds(size_t index, size_t size)
+        : std::runtime_error{"Array index out of bounds: " + std::to_string(index) + " (size: " + std::to_string(size) + ")"}
+    {
+    }
+};
+
+class null_element_in_array : public std::runtime_error
+{
+  public:
+    explicit null_element_in_array(size_t index)
+        : std::runtime_error{"Null element in array at index: " + std::to_string(index)}
+    {
+    }
+};
+
+class invalid_null_value : public std::runtime_error
+{
+  public:
+    explicit invalid_null_value(const std::string& key)
+        : std::runtime_error{"Invalid null value for key: " + key}
+    {
+    }
+};
+
+class qualified_path_resolution_error : public std::runtime_error
+{
+  public:
+    explicit qualified_path_resolution_error(const std::string& path, const std::string& error_node)
+        : std::runtime_error{"Qualified path resolution error: " + path + " (error at node: " + error_node + ")"}
+    {
+    }
+};
+
+class null_table_in_array : public std::runtime_error
+{
+  public:
+    explicit null_table_in_array(size_t index)
+        : std::runtime_error{"Null table in array at index: " + std::to_string(index)}
+    {
+    }
+};
+
+class stream_read_timeout : public std::runtime_error
+{
+  public:
+    explicit stream_read_timeout(size_t bytes_read, std::chrono::milliseconds timeout)
+        : std::runtime_error{"Stream read timeout: read " + std::to_string(bytes_read) + " bytes before timeout of " + std::to_string(timeout.count()) + "ms"}
+    {
+    }
+};
+
+class file_size_exceeded : public std::runtime_error
+{
+  public:
+    explicit file_size_exceeded(size_t file_size, size_t max_size)
+        : std::runtime_error{"File size exceeded: " + std::to_string(file_size) + " bytes (max allowed: " + std::to_string(max_size) + " bytes)"}
+    {
+    }
+};
+
+class nesting_depth_overflow : public std::runtime_error
+{
+  public:
+    explicit nesting_depth_overflow(size_t current_depth, size_t max_depth)
+        : std::runtime_error{"Nesting depth overflow: " + std::to_string(current_depth) + " (max allowed: " + std::to_string(max_depth) + ")"}
+    {
+    }
+};
+
+class table_entry_limit_exceeded : public std::runtime_error
+{
+  public:
+    explicit table_entry_limit_exceeded(size_t entry_count, size_t max_entries)
+        : std::runtime_error{"Table entry limit exceeded: " + std::to_string(entry_count) + " (max allowed: " + std::to_string(max_entries) + ")"}
+    {
+    }
+};
+
+class memory_growth_exceeded : public std::runtime_error
+{
+  public:
+    explicit memory_growth_exceeded(size_t growth_rate)
+        : std::runtime_error{"Memory growth rate exceeded: " + std::to_string(growth_rate) + " bytes/ms"}
+    {
+    }
+};
+
+class circular_reference_detected : public std::runtime_error
+{
+  public:
+    explicit circular_reference_detected(const std::string& reference_chain)
+        : std::runtime_error{"Circular reference detected: " + reference_chain}
+    {
+    }
+};
+
+class signed_integer_overflow : public std::runtime_error
+{
+  public:
+    explicit signed_integer_overflow(const std::string& value)
+        : std::runtime_error{"Signed integer overflow: " + value}
+    {
+    }
+};
+
+class signed_integer_underflow : public std::runtime_error
+{
+  public:
+    explicit signed_integer_underflow(const std::string& value)
+        : std::runtime_error{"Signed integer underflow: " + value}
+    {
+    }
+};
+
+class unsigned_integer_overflow : public std::runtime_error
+{
+  public:
+    explicit unsigned_integer_overflow(const std::string& value)
+        : std::runtime_error{"Unsigned integer overflow: " + value}
+    {
+    }
+};
+
+class negative_to_unsigned : public std::runtime_error
+{
+  public:
+    explicit negative_to_unsigned(const std::string& value)
+        : std::runtime_error{"Negative value converted to unsigned: " + value}
+    {
+    }
+};
+
+class invalid_numeric_format : public std::runtime_error
+{
+  public:
+    explicit invalid_numeric_format(const std::string& value)
+        : std::runtime_error{"Invalid numeric format: " + value}
+    {
+    }
+};
+
+class invalid_datetime_component : public std::runtime_error
+{
+  public:
+    explicit invalid_datetime_component(const std::string& field, const std::string& value, const std::string& valid_range)
+        : std::runtime_error{"Invalid datetime component: " + field + " = " + value + " (valid range: " + valid_range + ")"}
+    {
+    }
+};
+
 class array : public base
 {
   public:
@@ -833,7 +1043,10 @@ class array : public base
 
     std::shared_ptr<base> at(size_t idx) const
     {
-        return values_.at(idx);
+        auto element = values_.at(idx);
+        if (!element)
+            throw null_element_in_array(idx);
+        return element;
     }
 
     /**
@@ -861,8 +1074,11 @@ class array : public base
         std::vector<T> result;
         result.reserve(values_.size());
 
-        for (const auto& val : values_)
+        for (size_t i = 0; i < values_.size(); ++i)
         {
+            const auto& val = values_[i];
+            if (!val)
+                throw null_element_in_array(i);
             if (auto v = val->as<T>())
                 result.push_back(v->get());
             else
@@ -1124,6 +1340,8 @@ class table_array : public base
      */
     void push_back(const std::shared_ptr<table>& val)
     {
+        if (!val)
+            throw null_table_in_array(array_.get().size());
         array_.push_back(val);
     }
 
@@ -1132,6 +1350,11 @@ class table_array : public base
      */
     iterator insert(iterator position, const std::shared_ptr<table>& value)
     {
+        if (!value)
+        {
+            size_t index = position - begin();
+            throw null_table_in_array(index);
+        }
         return array_.insert(position, value);
     }
 
@@ -1381,6 +1604,18 @@ class table : public base
     }
 
     /**
+     * Obtains a table for a given key, if possible. Throws an exception
+     * if the table is not found.
+     */
+    std::shared_ptr<table> get_table_checked(const std::string& key) const
+    {
+        auto table_ptr = get_table(key);
+        if (!table_ptr)
+            throw table_not_found_exception(key);
+        return table_ptr;
+    }
+
+    /**
      * Obtains a table for a given key, if possible. Will resolve
      * "qualified keys".
      */
@@ -1389,6 +1624,18 @@ class table : public base
         if (contains_qualified(key) && get_qualified(key)->is_table())
             return std::static_pointer_cast<table>(get_qualified(key));
         return nullptr;
+    }
+
+    /**
+     * Obtains a table for a given key, if possible. Will resolve
+     * "qualified keys". Throws an exception if the table is not found.
+     */
+    std::shared_ptr<table> get_table_qualified_checked(const std::string& key) const
+    {
+        auto table_ptr = get_table_qualified(key);
+        if (!table_ptr)
+            throw table_not_found_exception(key);
+        return table_ptr;
     }
 
     /**
@@ -1536,6 +1783,8 @@ class table : public base
      */
     void insert(const std::string& key, const std::shared_ptr<base>& value)
     {
+        if (!value)
+            throw invalid_null_value(key);
         map_[key] = value;
     }
 
