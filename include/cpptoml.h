@@ -771,6 +771,78 @@ class array_exception : public std::runtime_error
     }
 };
 
+class nullptr_exception : public std::runtime_error
+{
+  public:
+    nullptr_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class out_of_bounds_exception : public std::runtime_error
+{
+  public:
+    out_of_bounds_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class type_mismatch_exception : public std::runtime_error
+{
+  public:
+    type_mismatch_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class network_exception : public std::runtime_error
+{
+  public:
+    network_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class memory_limit_exception : public std::runtime_error
+{
+  public:
+    memory_limit_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class circular_reference_exception : public std::runtime_error
+{
+  public:
+    circular_reference_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class encoding_exception : public std::runtime_error
+{
+  public:
+    encoding_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class invalid_character_exception : public std::runtime_error
+{
+  public:
+    invalid_character_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
+class concurrent_modification_exception : public std::runtime_error
+{
+  public:
+    concurrent_modification_exception(const std::string& err) : std::runtime_error{err}
+    {
+    }
+};
+
 class array : public base
 {
   public:
@@ -833,6 +905,15 @@ class array : public base
 
     std::shared_ptr<base> at(size_t idx) const
     {
+        return values_.at(idx);
+    }
+
+    std::shared_ptr<base> get(size_t idx) const
+    {
+        if (idx >= values_.size())
+        {
+            throw out_of_bounds_exception("Array index out of bounds: " + std::to_string(idx) + " (size: " + std::to_string(values_.size()) + ")");
+        }
         return values_.at(idx);
     }
 
@@ -902,7 +983,7 @@ class array : public base
         }
         else
         {
-            throw array_exception{"Arrays must be homogenous."};
+            throw type_mismatch_exception{"Arrays must be homogenous. Cannot add value of different type."};
         }
     }
 
@@ -1152,6 +1233,28 @@ class table_array : public base
     }
 
     /**
+     * Obtains a table at the given index.
+     * @throw std::out_of_range if the index is out of bounds
+     */
+    std::shared_ptr<table> at(size_t idx) const
+    {
+        return array_.at(idx);
+    }
+
+    /**
+     * Obtains a table at the given index.
+     * @throw out_of_bounds_exception if the index is out of bounds
+     */
+    std::shared_ptr<table> get(size_t idx) const
+    {
+        if (idx >= array_.size())
+        {
+            throw out_of_bounds_exception("Table array index out of bounds: " + std::to_string(idx) + " (size: " + std::to_string(array_.size()) + ")");
+        }
+        return array_.at(idx);
+    }
+
+    /**
      * Reserve space for n tables.
      */
     void reserve(size_type n)
@@ -1381,6 +1484,22 @@ class table : public base
     }
 
     /**
+     * Obtains a table for a given key. Throws an exception if the key
+     * does not exist or the value is not a table.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not a table
+     */
+    std::shared_ptr<table> get_table_safe(const std::string& key) const
+    {
+        auto base_ptr = get(key);
+        if (!base_ptr->is_table())
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not a table");
+        }
+        return std::static_pointer_cast<table>(base_ptr);
+    }
+
+    /**
      * Obtains a table for a given key, if possible. Will resolve
      * "qualified keys".
      */
@@ -1389,6 +1508,22 @@ class table : public base
         if (contains_qualified(key) && get_qualified(key)->is_table())
             return std::static_pointer_cast<table>(get_qualified(key));
         return nullptr;
+    }
+
+    /**
+     * Obtains a table for a given key. Will resolve "qualified keys".
+     * Throws an exception if the key does not exist or the value is not a table.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not a table
+     */
+    std::shared_ptr<table> get_table_qualified_safe(const std::string& key) const
+    {
+        auto base_ptr = get_qualified(key);
+        if (!base_ptr->is_table())
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not a table");
+        }
+        return std::static_pointer_cast<table>(base_ptr);
     }
 
     /**
@@ -1402,6 +1537,22 @@ class table : public base
     }
 
     /**
+     * Obtains an array for a given key. Throws an exception if the key
+     * does not exist or the value is not an array.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not an array
+     */
+    std::shared_ptr<array> get_array_safe(const std::string& key) const
+    {
+        auto array_ptr = get_array(key);
+        if (!array_ptr)
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not an array");
+        }
+        return array_ptr;
+    }
+
+    /**
      * Obtains an array for a given key. Will resolve "qualified keys".
      */
     std::shared_ptr<array> get_array_qualified(const std::string& key) const
@@ -1409,6 +1560,22 @@ class table : public base
         if (!contains_qualified(key))
             return nullptr;
         return get_qualified(key)->as_array();
+    }
+
+    /**
+     * Obtains an array for a given key. Will resolve "qualified keys".
+     * Throws an exception if the key does not exist or the value is not an array.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not an array
+     */
+    std::shared_ptr<array> get_array_qualified_safe(const std::string& key) const
+    {
+        auto array_ptr = get_array_qualified(key);
+        if (!array_ptr)
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not an array");
+        }
+        return array_ptr;
     }
 
     /**
@@ -1422,15 +1589,46 @@ class table : public base
     }
 
     /**
+     * Obtains a table_array for a given key. Throws an exception if the key
+     * does not exist or the value is not a table_array.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not a table_array
+     */
+    std::shared_ptr<table_array> get_table_array_safe(const std::string& key) const
+    {
+        auto table_array_ptr = get_table_array(key);
+        if (!table_array_ptr)
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not a table_array");
+        }
+        return table_array_ptr;
+    }
+
+    /**
      * Obtains a table_array for a given key, if possible. Will resolve
      * "qualified keys".
      */
-    std::shared_ptr<table_array>
-    get_table_array_qualified(const std::string& key) const
+    std::shared_ptr<table_array> get_table_array_qualified(const std::string& key) const
     {
         if (!contains_qualified(key))
             return nullptr;
         return get_qualified(key)->as_table_array();
+    }
+
+    /**
+     * Obtains a table_array for a given key. Will resolve "qualified keys".
+     * Throws an exception if the key does not exist or the value is not a table_array.
+     * @throw std::out_of_range if the key does not exist
+     * @throw nullptr_exception if the value is not a table_array
+     */
+    std::shared_ptr<table_array> get_table_array_qualified_safe(const std::string& key) const
+    {
+        auto table_array_ptr = get_table_array_qualified(key);
+        if (!table_array_ptr)
+        {
+            throw nullptr_exception("Value for key '" + key + "' is not a table_array");
+        }
+        return table_array_ptr;
     }
 
     /**
@@ -1452,6 +1650,86 @@ class table : public base
 
     /**
      * Helper function that attempts to get a value corresponding
+     * to the template parameter from a given key, returning a
+     * std::optional<T> instead of option<T>.
+     */
+    template <class T>
+    std::optional<T> try_get_as(const std::string& key) const
+    {
+        auto opt = get_as<T>(key);
+        if (opt)
+        {
+            return *opt;
+        }
+        return std::nullopt;
+    }
+
+    /**
+     * Helper function that attempts to get an integer value from a given key.
+     */
+    std::optional<int64_t> try_get_as_int(const std::string& key) const
+    {
+        return try_get_as<int64_t>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a double value from a given key.
+     */
+    std::optional<double> try_get_as_double(const std::string& key) const
+    {
+        return try_get_as<double>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a boolean value from a given key.
+     */
+    std::optional<bool> try_get_as_bool(const std::string& key) const
+    {
+        return try_get_as<bool>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a string value from a given key.
+     */
+    std::optional<std::string> try_get_as_string(const std::string& key) const
+    {
+        return try_get_as<std::string>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_date value from a given key.
+     */
+    std::optional<local_date> try_get_as_local_date(const std::string& key) const
+    {
+        return try_get_as<local_date>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_time value from a given key.
+     */
+    std::optional<local_time> try_get_as_local_time(const std::string& key) const
+    {
+        return try_get_as<local_time>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_datetime value from a given key.
+     */
+    std::optional<local_datetime> try_get_as_local_datetime(const std::string& key) const
+    {
+        return try_get_as<local_datetime>(key);
+    }
+
+    /**
+     * Helper function that attempts to get an offset_datetime value from a given key.
+     */
+    std::optional<offset_datetime> try_get_as_offset_datetime(const std::string& key) const
+    {
+        return try_get_as<offset_datetime>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a value corresponding
      * to the template parameter from a given key. Will resolve "qualified
      * keys".
      */
@@ -1466,6 +1744,86 @@ class table : public base
         {
             return {};
         }
+    }
+
+    /**
+     * Helper function that attempts to get a value corresponding
+     * to the template parameter from a given key, returning a
+     * std::optional<T> instead of option<T>. Will resolve "qualified keys".
+     */
+    template <class T>
+    std::optional<T> try_get_qualified_as(const std::string& key) const
+    {
+        auto opt = get_qualified_as<T>(key);
+        if (opt)
+        {
+            return *opt;
+        }
+        return std::nullopt;
+    }
+
+    /**
+     * Helper function that attempts to get an integer value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<int64_t> try_get_qualified_as_int(const std::string& key) const
+    {
+        return try_get_qualified_as<int64_t>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a double value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<double> try_get_qualified_as_double(const std::string& key) const
+    {
+        return try_get_qualified_as<double>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a boolean value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<bool> try_get_qualified_as_bool(const std::string& key) const
+    {
+        return try_get_qualified_as<bool>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a string value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<std::string> try_get_qualified_as_string(const std::string& key) const
+    {
+        return try_get_qualified_as<std::string>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_date value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<local_date> try_get_qualified_as_local_date(const std::string& key) const
+    {
+        return try_get_qualified_as<local_date>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_time value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<local_time> try_get_qualified_as_local_time(const std::string& key) const
+    {
+        return try_get_qualified_as<local_time>(key);
+    }
+
+    /**
+     * Helper function that attempts to get a local_datetime value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<local_datetime> try_get_qualified_as_local_datetime(const std::string& key) const
+    {
+        return try_get_qualified_as<local_datetime>(key);
+    }
+
+    /**
+     * Helper function that attempts to get an offset_datetime value from a given key. Will resolve "qualified keys".
+     */
+    std::optional<offset_datetime> try_get_qualified_as_offset_datetime(const std::string& key) const
+    {
+        return try_get_qualified_as<offset_datetime>(key);
     }
 
     /**
